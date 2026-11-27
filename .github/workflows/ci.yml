@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction --no-ansi
+      - name: Check formatting with Black
+        run: poetry run python -m black --check src tests
+      - name: Run tests
+        run: >-
+          poetry run python -m pytest -q --cov --cov-report=term-missing
+          --cov-fail-under=90
+
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require a new version when the package changes
+        run: |
+          base="origin/${{ github.base_ref }}"
+          if ! git cat-file -e "$base:pyproject.toml" 2>/dev/null; then
+            echo "No pyproject.toml on the base branch yet; nothing to compare."
+            exit 0
+          fi
+          if git diff --quiet "$base...HEAD" -- src; then
+            echo "No package changes; a new version is not required."
+            exit 0
+          fi
+          read_version() {
+            python3 -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])"
+          }
+          base_version="$(git show "$base:pyproject.toml" | read_version)"
+          head_version="$(read_version < pyproject.toml)"
+          if [ "$base_version" = "$head_version" ]; then
+            echo "::error::The package changed but the version is still $head_version. Bump it in pyproject.toml."
+            exit 1
+          fi
+          echo "Version bumped: $base_version -> $head_version"

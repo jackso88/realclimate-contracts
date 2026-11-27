@@ -1,0 +1,54 @@
+name: Release
+
+# Runs after a pull request is merged into main. If pyproject.toml carries a
+# version that has no tag yet, the package is built and published as a GitHub
+# release tagged v<version>. Services depend on that tag.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction --no-ansi
+      - name: Run tests
+        run: poetry run python -m pytest -q
+      - name: Read the package version
+        id: version
+        run: echo "value=$(poetry version --short)" >> "$GITHUB_OUTPUT"
+      - name: Check whether the tag already exists
+        id: tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/v${{ steps.version.outputs.value }}" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the package
+        if: steps.tag.outputs.exists == 'false'
+        run: poetry build
+      - name: Publish the release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "v${{ steps.version.outputs.value }}" dist/*
+          --title "v${{ steps.version.outputs.value }}"
+          --generate-notes
+          --target "$GITHUB_SHA"
